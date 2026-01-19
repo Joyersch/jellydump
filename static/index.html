@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>JellyDump</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            max-width: 650px;
+            margin: 40px auto;
+            line-height: 1.5;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        label {
+            display: block;
+            margin-top: 1em;
+            font-weight: bold;
+        }
+
+        input, button {
+            width: 100%;
+            padding: 0.5em;
+            margin-top: 0.3em;
+            box-sizing: border-box;
+            font-size: 1em;
+        }
+
+        button:disabled {
+            background: #bbb;
+            cursor: not-allowed;
+        }
+
+        #globalInfo {
+            margin-top: 1.5em;
+            padding: 0.8em;
+            background: #f0f0f0;
+            border-left: 4px solid #4caf50;
+            white-space: pre-wrap;
+        }
+
+        .progress-wrapper {
+            margin-top: 1em;
+            border: 1px solid #ddd;
+            padding: 0.5em;
+            background: #fafafa;
+        }
+
+        .progress-title {
+            font-size: 0.9em;
+            margin-bottom: 0.3em;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 1.2em;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fg {
+            height: 100%;
+            width: 0%;
+            background: #4caf50;
+            color: white;
+            text-align: right;
+            line-height: 1.2em;
+            padding-right: 0.4em;
+            box-sizing: border-box;
+            font-size: 0.85em;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+
+<h1>JellyDump</h1>
+
+<label for="url">URL</label>
+<input id="url" type="text">
+
+<label for="name">Series-Name</label>
+<input id="name" type="text">
+
+<label for="season">Season</label>
+<input id="season" type="number" min="1" value="1">
+
+<label for="imdbid">IMDb‑ID</label>
+<input id="imdbid" type="text" placeholder="tt0123456">
+
+<button id="downloadBtn">Download</button>
+
+<div id="globalInfo">Nothing started yet</div>
+<div id="statusContainer"></div>
+
+<script>
+    const btn = document.getElementById('downloadBtn');
+    const globalInfo = document.getElementById('globalInfo');
+    const statusContainer = document.getElementById('statusContainer');
+
+    let lastSeenEpisode = null;
+    let jobRunning = false;
+
+    function setGlobalMessage(msg) {
+        globalInfo.textContent = msg;
+    }
+
+    function createEpisodeBar(episodeNo, title) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'progress-wrapper';
+        wrapper.id = `episode-${episodeNo}`;
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'progress-title';
+        titleDiv.textContent = `Folge ${episodeNo}: ${title}`;
+        wrapper.appendChild(titleDiv);
+
+        const bg = document.createElement('div');
+        bg.className = 'progress-bar-bg';
+
+        const fg = document.createElement('div');
+        fg.className = 'progress-bar-fg';
+        fg.textContent = '0%';
+        bg.appendChild(fg);
+        wrapper.appendChild(bg);
+
+        statusContainer.appendChild(wrapper);
+    }
+
+    function updateEpisodeBar(episodeNo, percent, title) {
+        const wrapper = document.getElementById(`episode-${episodeNo}`);
+        if (!wrapper) return;
+
+        const titleDiv = wrapper.querySelector('.progress-title');
+        titleDiv.textContent = `Episode ${episodeNo}: ${title}`;
+
+        const fg = wrapper.querySelector('.progress-bar-fg');
+        fg.style.width = `${percent}%`;
+        fg.textContent = `${percent}%`;
+    }
+
+    function completeEpisodeBar(episodeNo) {
+        const wrapper = document.getElementById(`episode-${episodeNo}`);
+        if (!wrapper) return;
+        const fg = wrapper.querySelector('.progress-bar-fg');
+        fg.style.width = `100%`;
+        fg.textContent = `100%`
+    }
+
+    function poll(jobId) {
+        const interval = setInterval(async () => {
+            try {
+                const resp = await fetch(`/status/${jobId}`);
+                const data = await resp.json();
+
+                let line = `Job ${data.status}`;
+                if (data.message) line += ` – ${data.message}`;
+                if (data.error) line += ` – ERROR: ${data.error}`;
+                setGlobalMessage(line);
+
+                if (data.current_episode !== undefined && data.current_episode !== null) {
+                    const ep = data.current_episode;
+                    const pct = data.progress_percent ?? 0;
+                    const title = data.current_title ?? '';
+
+                    if (lastSeenEpisode !== ep) {
+                        completeEpisodeBar(lastSeenEpisode);
+                        createEpisodeBar(ep, title);
+                        lastSeenEpisode = ep;
+                    }
+                    updateEpisodeBar(ep, pct, title);
+                }
+
+                if (data.status === 'finished' || data.status === 'failed') {
+                    clearInterval(interval);
+                    btn.disabled = false;
+                    jobRunning = false;
+                }
+            } catch (e) {
+                setGlobalMessage(`Polling error: ${e}`);
+                clearInterval(interval);
+                btn.disabled = false;
+                jobRunning = false;
+            }
+        }, 100);
+    }
+
+    btn.addEventListener('click', async () => {
+        if (jobRunning) return;
+
+        globalInfo.textContent = '';
+        statusContainer.innerHTML = '';
+        lastSeenEpisode = null;
+
+        const payload = {
+            url: document.getElementById('url').value.trim(),
+            name: document.getElementById('name').value.trim(),
+            season: parseInt(document.getElementById('season').value, 10),
+            imdbid: document.getElementById('imdbid').value.trim()
+        };
+
+        if (!payload.url || !payload.name || !payload.imdbid || isNaN(payload.season)) {
+            setGlobalMessage('Please fill all fields!');
+            return;
+        }
+
+        btn.disabled = true;
+        jobRunning = true;
+
+        try {
+            const resp = await fetch('/pull', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+
+            if (resp.ok) {
+                setGlobalMessage(`task queued – ID: ${data.job_id}`);
+                poll(data.job_id);
+            } else {
+                setGlobalMessage(`error while stating: ${data.detail || JSON.stringify(data)}`);
+                btn.disabled = false;
+                jobRunning = false;
+            }
+        } catch (e) {
+            setGlobalMessage(`network error: ${e}`);
+            btn.disabled = false;
+            jobRunning = false;
+        }
+    });
+</script>
+</body>
+</html>
