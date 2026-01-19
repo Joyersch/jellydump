@@ -102,7 +102,7 @@ def _run_download(job_id: str, payload: RequestPayload) -> None:
 
     try:
         safe_name = payload.name.strip()
-        main_folder_name = f"{safe_name} [{payload.imdbid}]"
+        main_folder_name = f"{safe_name} [imdbid-{payload.imdbid}]"
         main_dir = BASE_DATA_DIR / main_folder_name
         main_dir.mkdir(parents=True, exist_ok=True)
 
