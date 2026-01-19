@@ -163,7 +163,6 @@ def _run_download(job_id: str, payload: RequestPayload) -> None:
 
 @app.post("/pull")
 async def pull(request: RequestPayload, background_tasks: BackgroundTasks):
-    # ---- check for an active job ----------------------------------------
     with jobs_lock:
         active = any(meta["status"] in ("pending", "running") for meta in jobs.values())
         if active:
